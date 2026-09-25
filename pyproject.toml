@@ -1,0 +1,22 @@
+[project]
+name = "classroom-cli"
+version = "0.2.0"
+description = "Per-student GitHub repos from a roster file, replacing the repo side of GitHub Classroom."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Andrew Binkowski" }]
+requires-python = ">=3.11"   # tomllib
+dependencies = []            # standard library only; needs the gh CLI on PATH
+
+[project.scripts]
+classroom = "classroom:main"
+
+[project.urls]
+Repository = "https://github.com/uchicago-codes/classroom-cli"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["classroom"]

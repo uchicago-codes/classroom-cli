@@ -1,4 +1,4 @@
-# classroom.py
+# classroom-cli
 
 A small replacement for the parts of GitHub Classroom most courses actually
 used: one private repository per student per assignment, created from a
@@ -9,21 +9,31 @@ GitHub Classroom was decommissioned on 28 August 2026 and its data deleted on
 autograding, and no student-facing "accept assignment" link. What it does is
 the repository administration, from one file you control.
 
-Two files, no service to run, no account to create:
+One command and one file per course, no service to run, no account to create:
 
 ```
-classroom.py     the script
-roster.yml       your course, staff and students
+classroom        the command
+roster.toml      your course, staff and students, one per course folder
 ```
 
 ## Install
 
+With [uv](https://docs.astral.sh/uv/), which supplies a suitable Python:
+
+```bash
+uv tool install git+https://github.com/uchicago-codes/classroom-cli
+```
+
+That puts `classroom` on your `PATH`. To work on the tool itself, clone it and
+install the clone instead, so edits take effect without reinstalling:
+
 ```bash
 git clone https://github.com/uchicago-codes/classroom-cli.git
-cd classroom-cli
-pip install -r requirements.txt
-cp roster.example.yml roster.yml     # then edit it
+uv tool install --editable ./classroom-cli
 ```
+
+`uv tool uninstall classroom-cli` removes it. Without uv, `pipx install` works
+the same way, or run `python3 classroom.py` directly.
 
 ## What it does
 
@@ -36,7 +46,8 @@ cp roster.example.yml roster.yml     # then edit it
 
 ## Requirements
 
-- **Python 3.10+** with `PyYAML` (`pip install pyyaml`)
+- **Python 3.11+.** No other packages; the roster is read with the standard
+  library's `tomllib`. `uv tool install` provides Python if you lack it.
 - **The `gh` CLI**, authenticated: `gh auth login`. The script shells out to
   `gh`, so there is no second token to manage.
 - **Admin on a GitHub organisation.** Student repos are created there.
@@ -74,56 +85,53 @@ This must be `none`. Anything else grants every org member access to every
 repository, which means students could read each other's work. This is the
 single most important setting here and the easiest to get wrong.
 
-**2. Write `roster.yml`, beside the script.** Start from
-`roster.example.yml`. `org`, `course`, `year` and `term` are required; the
-script refuses to run without them rather than guess where to create repos. To
-keep the roster somewhere else, such as a course repository, pass
-`--roster-file path/to/roster.yml` on every command.
+**2. Write `roster.toml` in your course folder.** Start from
+`roster.example.toml`. `classroom` looks for `roster.toml` in the current
+directory, so keep one per course and run the command from that course's
+folder; `--roster-file path/to/roster.toml` points anywhere else. `org`,
+`course`, `year` and `term` are required, and the command refuses to run
+without them rather than guess where to create repos.
 
-```yaml
-org: your-github-org
-course: cs101
-year: 2026
-term: autumn
-team: cs101-staff-2026-autumn
+```toml
+org    = "your-github-org"
+course = "cs101"
+year   = 2026
+term   = "autumn"
+team   = "cs101-staff-2026-autumn"
 
-staff:
-  - github: yourhandle
-    name: Your Name
-    role: instructor
-  - github: ta-handle
-    name: A TA
-    role: ta
+staff = [
+  { github = "yourhandle", name = "Your Name", role = "instructor" },
+  { github = "ta-handle",  name = "A TA",      role = "ta" },
+]
 
-students:
-  - cnetid: jdoe
-    name: Jane Doe
-    github: jdoe-gh
+students = [
+  { github = "jdoe-gh", name = "Jane Doe", cnetid = "jdoe" },
+]
 ```
 
 `cnetid` is whatever internal identifier your institution uses; the script only
 checks it is present. `github` must be the student's actual GitHub username.
 
 **3. Keep the roster out of version control.** Student names paired with
-identifiers are educational records. `roster.yml` is already in this repo's
-`.gitignore`; if you keep it elsewhere, ignore it there too.
+identifiers are educational records. Add `roster.toml` to the `.gitignore` of
+whatever folder it lives in.
 
 ## Typical use
 
 ```bash
 # Once a quarter, and when a TA joins or leaves
-python3 classroom.py --team
+classroom --team
 
 # Look before you leap
-python3 classroom.py --roster
+classroom --roster
 
 # One throwaway repo for yourself, to confirm it all works
-python3 classroom.py --create --name apitest --only yourhandle
+classroom --create --name apitest --only yourhandle
 
 # Per assignment
-python3 classroom.py --create --name assignment-3
-python3 classroom.py --create --name assignment-3 --template starter-repo
-python3 classroom.py --status --name assignment-3
+classroom --create --name assignment-3
+classroom --create --name assignment-3 --template starter-repo
+classroom --status --name assignment-3
 ```
 
 `--dry-run` works on `--team` and `--create`.
@@ -147,7 +155,7 @@ Classroom collected these through its accept flow. Without it, you have to ask
 
 ## How staff get access
 
-Through the team named in `roster.yml`, not by adding people to each
+Through the team named in `roster.toml`, not by adding people to each
 repository. `--team` creates it and keeps its membership matching the file.
 
 This matters more than it sounds. A course with 30 students and 8 assignments
@@ -191,7 +199,7 @@ Colour output respects `NO_COLOR` and turns itself off when piped.
 
 ## Adapting it
 
-Everything course-specific is in `roster.yml`, including the organisation, so
+Everything course-specific is in `roster.toml`, including the organisation, so
 the script should not need editing. If your institution uses a different
 identifier than `cnetid`, that field is not validated beyond being present.
 

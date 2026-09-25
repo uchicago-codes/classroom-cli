@@ -1,0 +1,21 @@
+# Copy to roster.toml and edit. roster.toml is gitignored: student names
+# paired with identifiers are educational records.
+
+org    = "your-github-org"
+course = "cs101"
+year   = 2026
+term   = "autumn"
+
+# Instructors and TAs. Everyone here gets push on every student repo, via
+# the GitHub team named below.
+team = "cs101-staff-2026-autumn"
+
+staff = [
+  { github = "yourhandle", name = "Your Name",            role = "instructor" },
+  { github = "someta",     name = "A Teaching Assistant", role = "ta" },
+]
+
+# cnetid is whatever internal ID your institution uses; it only has to be present.
+students = [
+  { github = "octocat", name = "Octo Cat", cnetid = "cat" },
+]

@@ -11,32 +11,32 @@ Typical sequence
 
   Once a quarter, and whenever a TA joins or leaves:
 
-    1.  classroom.py --team
+    1.  classroom --team
         Creates the staff team named in the roster if it does not exist, and
         makes its membership match the staff list. This is what gives you and
         your TAs access to every student repo.
 
-    2.  classroom.py --roster
+    2.  classroom --roster
         Checks every GitHub username is real, nobody is listed twice, and the
         team matches the roster. Changes nothing. --create runs this itself,
         so this step is for looking before you leap.
 
   Per assignment:
 
-    3.  classroom.py --create --name assignment-3
+    3.  classroom --create --name assignment-3
         One empty private repo per student, with a README.
 
-    3b. classroom.py --create --name assignment-3 --template <template-repo>
+    3b. classroom --create --name assignment-3 --template <template-repo>
         The same, but populated from a template repo. Use this when students
         need starter code.
 
-    4.  classroom.py --status --name assignment-3
+    4.  classroom --status --name assignment-3
         Who accepted the invitation, who has pushed, and when. Run it the
         morning after the deadline.
 
   Before doing any of that for real:
 
-    classroom.py --create --name apitest --only yourhandle
+    classroom --create --name apitest --only yourhandle
         One throwaway repo for yourself, to confirm the whole path works.
         Delete it in the GitHub UI afterwards; this script cannot.
 
@@ -45,9 +45,9 @@ Typical sequence
 Other useful forms
 ------------------
 
-    classroom.py --create --name final-project        # any name, not just assignments
-    classroom.py --create --name assignment-3 --only jdoe   # a student who enrolled late
-    classroom.py --status --name assignment-3 --only jdoe   # one student
+    classroom --create --name final-project        # any name, not just assignments
+    classroom --create --name assignment-3 --only jdoe   # a student who enrolled late
+    classroom --status --name assignment-3 --only jdoe   # one student
 
 Repo names are <course>-<year>-<term>-<name>-<github username>, with the first
 three read from the roster: --name assignment-3 gives
@@ -60,6 +60,7 @@ Run `gh auth status` if calls start failing.
 """
 
 import argparse, json, os, re, subprocess, sys
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -102,7 +103,7 @@ def colour_help(text: str) -> str:
         out = f"{C.CYAN}{body}{C.OFF}"
         return out + (f"  {C.DIM}{comment.strip()}{C.OFF}" if comment else "")
 
-    text = re.sub(r"(classroom\.py[^\n#]*)(#[^\n]*)?", cmd, text)
+    text = re.sub(r"(classroom --[^\n#]*)(#[^\n]*)?", cmd, text)
 
     # The naming rule, in the prose under the examples. <placeholders> in
     # amber so the shape is readable at a glance, and the literal example in
@@ -145,9 +146,9 @@ def note(text: str) -> None:
 # guessing either would create repos in the wrong place.
 STAFF_TEAM = "instructors"
 REQUIRED = ("org", "course", "year", "term")
-# Beside the script by default. --roster-file points somewhere else, so the
-# roster can live in a course repo while the script lives in its own.
-ROSTER = Path(__file__).resolve().parent / "roster.yml"
+# In the current directory, so each course keeps its own roster and you run
+# the command from that course's folder. --roster-file points anywhere else.
+ROSTER = Path("roster.toml")
 
 
 def shown(p: Path) -> str:
@@ -183,26 +184,24 @@ def api(path: str, method: str = "GET", check: bool = True, **fields) -> dict | 
 
 # ---------------------------------------------------------------- roster
 
-SAMPLE = """org: your-github-org
-course: cs101
-year: 2026
-term: autumn
+SAMPLE = """org    = "your-github-org"
+course = "cs101"
+year   = 2026
+term   = "autumn"
 
 # Instructors and TAs. Everyone here gets push on every student repo, via
 # the GitHub team named below.
-team: instructors
-staff:
-  - github: yourhandle
-    name: Your Name
-    role: instructor
-  - github: someta
-    name: A Teaching Assistant
-    role: ta
+team = "cs101-staff-2026-autumn"
 
-students:
-  - cnetid: cat
-    name: Octo Cat
-    github: octocat
+staff = [
+  { github = "yourhandle", name = "Your Name",            role = "instructor" },
+  { github = "someta",     name = "A Teaching Assistant", role = "ta" },
+]
+
+# cnetid is whatever internal ID your institution uses; it only has to be present.
+students = [
+  { github = "octocat", name = "Octo Cat", cnetid = "cat" },
+]
 """
 
 
@@ -220,15 +219,10 @@ def load_roster() -> dict:
             "  educational records. Remove the line from .gitignore if you\n"
             "  want it versioned."
         )
-    import yaml
     try:
-        data = yaml.safe_load(ROSTER.read_text()) or {}
-    except yaml.YAMLError as e:
-        sys.exit(f"{shown(ROSTER)} is not valid YAML\n  {e}")
-
-    if not isinstance(data, dict):
-        sys.exit(f"{shown(ROSTER)} should be a mapping with "
-                 f"'staff' and 'students' keys.")
+        data = tomllib.loads(ROSTER.read_text())
+    except tomllib.TOMLDecodeError as e:
+        sys.exit(f"{shown(ROSTER)} is not valid TOML\n  {e}")
     data.setdefault("staff", [])
     data.setdefault("students", [])
     data.setdefault("team", STAFF_TEAM)
@@ -321,7 +315,7 @@ def check_roster(quiet: bool = False) -> tuple[int, int]:
     if not team_exists(data["team"]):
         # Listing every member as "not in team" would be true but useless.
         bad(f"team '{data['team']}' does not exist in {org()}")
-        note(f"   run:  python3 {Path(__file__).name} --team")
+        note("   run:  classroom --team")
         fatal += 1
     else:
         actual = {m["login"].lower() for m in
@@ -552,7 +546,7 @@ def cmd_status(base: str, only: str | None = None) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        prog="classroom.py", description=colour_help(__doc__ or ""),
+        prog="classroom", description=colour_help(__doc__ or ""),
         formatter_class=argparse.RawDescriptionHelpFormatter)
 
     cmd = ap.add_mutually_exclusive_group(required=True)
@@ -578,7 +572,7 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true",
                     help="print the plan and change nothing")
     ap.add_argument("--roster-file", metavar="PATH", type=Path,
-                    help="roster to use instead of roster.yml beside the script")
+                    help="roster to use instead of roster.toml in the current directory")
     a = ap.parse_args()
 
     global ROSTER

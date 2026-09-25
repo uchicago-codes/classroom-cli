@@ -1,4 +1,7 @@
+roster.toml
 roster.yml
 __pycache__/
 *.pyc
+*.egg-info/
+build/
 .DS_Store
