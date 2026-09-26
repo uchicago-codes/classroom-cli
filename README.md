@@ -43,6 +43,7 @@ the same way, or run `python3 classroom.py` directly.
 | `--team` | writes | Creates the staff team, syncs its membership to the roster |
 | `--create` | writes | One private repo per student, template or empty |
 | `--status` | reads | Who accepted the invite, who has pushed, and when |
+| `--publish` | writes | Copies starter files from a course repo into a template repo |
 
 ## Requirements
 
@@ -134,11 +135,46 @@ classroom --create --name assignment-3 --template starter-repo
 classroom --status --name assignment-3
 ```
 
-`--dry-run` works on `--team` and `--create`.
+`--dry-run` works on `--team`, `--create` and `--publish`.
 
 Repositories are named `<course>-<year>-<term>-<name>-<github username>`, so
 `--name assignment-3` gives `cs101-2026-autumn-assignment-3-jdoe-gh`. `--name`
 takes anything: `final-project`, `midterm`, `lab-2`.
+
+## Keeping templates in the course repo
+
+A template repository kept as a git submodule of the course repo is two repos
+to commit to for every change, plus a `submodule update` on every clone.
+`--publish` removes the submodule. The starter files live in an ordinary
+folder of the course repo, next to the spec and the solutions, and the
+template repository becomes their published copy:
+
+```
+modules/module-1/assignment/starter/    # what students get
+modules/module-1/instructor/            # solutions and rubric; never published
+```
+
+```bash
+classroom --publish --template mpcs56430-module-1-assignment-template \
+          --from modules/module-1/assignment/starter --dry-run
+```
+
+- **Only committed files are published**, read from `HEAD` with
+  `git archive`. It refuses to run if the folder has uncommitted changes, so
+  every publish can be traced to a commit, and gitignored files (`.venv`,
+  `.DS_Store`, notebook checkpoints) never leave the course repo
+- **The template's whole tree is replaced**, so a file deleted from the folder
+  is deleted from the template. The change is one new commit, `Publish from
+  <course repo>@<sha>`; the template's history is never rewritten
+- **Nothing changes if nothing differs.** `--dry-run` shows the file-level
+  diff and pushes nothing
+- **A missing template repo is created**, private and marked as a template
+- `--org` gives the organisation directly, so `--publish` runs without a
+  roster. Otherwise the roster's `org` is used
+
+Publishing does not reach student repositories that already exist; `--create`
+copies the template once, at creation. To change starter files after repos are
+made, tell students what to pull or edit, as before.
 
 ## How students get access
 
@@ -169,7 +205,8 @@ the file, and someone in the file who is not in the team.
 ## What it will not do
 
 **It cannot delete or overwrite a repository.** `--create` skips any repo that
-already exists and there is no force flag. A student repository may hold
+already exists and there is no force flag. `--publish` adds commits to a
+template repository and never rewrites or deletes it. A student repository may hold
 submitted work, and no convenience is worth risking that. Delete by hand, in
 the GitHub UI, if you really mean to.
 

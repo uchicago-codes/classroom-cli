@@ -40,7 +40,14 @@ Typical sequence
         One throwaway repo for yourself, to confirm the whole path works.
         Delete it in the GitHub UI afterwards; this script cannot.
 
-  Add --dry-run to --team or --create to see the plan and send nothing.
+  Per assignment, before --create, when the starter files live in a course repo:
+
+    5.  classroom --publish --template <template-repo> --from <folder>
+        Copies the folder's committed files into the template repo as one new
+        commit, creating the repo if it does not exist. Replaces keeping the
+        template as a git submodule.
+
+  Add --dry-run to --team, --create or --publish to see the plan and send nothing.
 
 Other useful forms
 ------------------
@@ -59,7 +66,7 @@ Authentication comes from the gh CLI, so there is no second token to manage.
 Run `gh auth status` if calls start failing.
 """
 
-import argparse, json, os, re, subprocess, sys
+import argparse, json, os, re, subprocess, sys, tempfile
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
@@ -205,9 +212,12 @@ students = [
 """
 
 
+ORG: str | None = None   # --org, for commands that need nothing else from a roster
+
+
 def org() -> str:
-    """The GitHub organisation, from the roster."""
-    return load_roster()["org"]
+    """The GitHub organisation: --org if given, otherwise the roster's."""
+    return ORG or load_roster()["org"]
 
 
 def load_roster() -> dict:
@@ -542,6 +552,106 @@ def cmd_status(base: str, only: str | None = None) -> None:
             ok(line)
 
 
+# ---------------------------------------------------------------- publish
+
+def git(*args: str, cwd: Path, check: bool = True) -> str:
+    r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    if check and r.returncode:
+        sys.exit(f"git {' '.join(args[:2])} failed in {shown(cwd)}:\n"
+                 f"  {r.stderr.strip()[:400]}")
+    return r.stdout
+
+
+def cmd_publish(template: str | None, source: Path | None, do_it: bool) -> None:
+    """
+    Copy a folder from a course repo into a template repo, as one new commit.
+
+    The starter code lives in the course repo, next to the spec and the
+    solutions, and the template repo is only its published copy. That replaces
+    submodules, where every change meant a commit in two repos and an update
+    on every clone.
+
+    Only committed files are published, read from HEAD, so the template can
+    always be traced to a commit in the course repo, and gitignored files
+    (.venv, .DS_Store, notebook checkpoints) never leave it. The template's
+    history is kept: each publish is a commit on top, never a rewrite.
+    """
+    if not template or not source:
+        sys.exit("Give both, for example:\n"
+                 "  classroom --publish --template <template-repo> "
+                 "--from modules/module-1/assignment/starter")
+    source = source.resolve()
+    if not source.is_dir():
+        sys.exit(f"No folder {shown(source)}")
+
+    top = Path(git("rev-parse", "--show-toplevel", cwd=source).strip())
+    rel = source.relative_to(top).as_posix()
+    if git("status", "--porcelain", "--", ".", cwd=source).strip():
+        sys.exit(f"{shown(source)} has uncommitted changes. Commit them first,\n"
+                 "  so the template can be traced to a commit.")
+    if not git("ls-files", "--", ".", cwd=source).strip():
+        sys.exit(f"{shown(source)} has no committed files.")
+    sha = git("rev-parse", "--short", "HEAD", cwd=top).strip()
+    origin = f"{top.name}@{sha}"
+
+    full = f"{org()}/{template}"
+    info = api(f"repos/{full}", check=False)
+    head(f"\U0001F4E4  {C.CYAN}{rel}{C.OFF}  →  {C.CYAN}{full}{C.OFF}")
+    note(f"source    {origin}")
+    if info is None:
+        warn_("template repo does not exist; it will be created, private, as a template")
+    elif not info.get("is_template"):
+        warn_("repo exists but is not marked as a template; --create cannot use it "
+              "until it is (Settings → Template repository)")
+
+    if info is None and do_it:
+        # Created first and then cloned, so the push goes through gh's own
+        # credentials like every other clone here.
+        api(f"orgs/{org()}/repos", "POST", name=template, private=True,
+            is_template=True)
+        ok(f"created {full}, private, as a template")
+        info = api(f"repos/{full}")
+
+    with tempfile.TemporaryDirectory(prefix="classroom-publish-") as tmp:
+        work = Path(tmp) / template
+        if info is None:
+            work.mkdir()
+            git("init", "-q", "-b", "main", cwd=work)
+            branch = "main"
+        else:
+            gh("repo", "clone", full, str(work), "--", "-q")
+            branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=work).strip()
+            if branch == "HEAD":        # an empty repo has no branch yet
+                branch = info.get("default_branch") or "main"
+                git("checkout", "-q", "-b", branch, cwd=work)
+            # Replace the whole tree, so files deleted in the course repo are
+            # deleted in the template too.
+            if git("ls-files", cwd=work).strip():
+                git("rm", "-rq", ".", cwd=work)
+
+        tar = subprocess.run(["git", "archive", "--format=tar", f"HEAD:{rel}"],
+                             cwd=top, capture_output=True, check=True)
+        subprocess.run(["tar", "-x", "-C", str(work)], input=tar.stdout, check=True)
+        git("add", "-A", cwd=work)
+
+        if not git("status", "--porcelain", cwd=work).strip():
+            ok("template already matches; nothing to publish")
+            return
+        print()
+        for line in git("diff", "--cached", "--stat", cwd=work).rstrip().splitlines():
+            note(line)
+
+        if not do_it:
+            print(f"\n  {C.DIM}Dry run. Nothing was pushed. "
+                  f"Drop --dry-run to publish.{C.OFF}")
+            return
+
+        git("commit", "-q", "-m", f"Publish from {origin}\n\nSource: {rel}", cwd=work)
+        git("push", "-q", "origin", branch, cwd=work)
+        print()
+        ok(f"published {origin} to {full}")
+
+
 # ---------------------------------------------------------------- main
 
 def main() -> None:
@@ -558,13 +668,23 @@ def main() -> None:
                      help="create one private repo per student")
     cmd.add_argument("--status", action="store_true",
                      help="who has accepted and pushed")
+    cmd.add_argument("--publish", action="store_true",
+                     help="copy a committed folder (--from) into a template repo "
+                          "(--template) as one new commit")
 
     ap.add_argument("--name", metavar="NAME",
                     help="what this is, e.g. assignment-3 or final-project. "
                          "The course, year and term are prepended from the roster "
                          "and the student's username appended")
     ap.add_argument("--template", metavar="REPO",
-                    help="with --create: template to generate from; omit for empty")
+                    help="with --create: template to generate from; omit for empty. "
+                         "With --publish: the template repo to publish to")
+    ap.add_argument("--from", dest="source", metavar="DIR", type=Path,
+                    help="with --publish: the folder in a course repo holding the "
+                         "starter files")
+    ap.add_argument("--org", metavar="ORG",
+                    help="GitHub organisation, instead of the roster's. Lets "
+                         "--publish run without a roster")
     ap.add_argument("--only", metavar="USER",
                     help="act on one person from the roster, staff included. "
                          "Use it to create a throwaway repo for yourself and "
@@ -575,14 +695,17 @@ def main() -> None:
                     help="roster to use instead of roster.toml in the current directory")
     a = ap.parse_args()
 
-    global ROSTER
+    global ROSTER, ORG
     if a.roster_file:
         ROSTER = a.roster_file
+    ORG = a.org
 
     if a.roster:
         sys.exit(1 if check_roster()[0] else 0)
     elif a.team:
         cmd_team(not a.dry_run)
+    elif a.publish:
+        cmd_publish(a.template, a.source, not a.dry_run)
     else:
         base = base_name(a.name)
         if a.create:
