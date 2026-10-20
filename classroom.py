@@ -620,7 +620,9 @@ def cmd_publish(template: str | None, source: Path | None, do_it: bool) -> None:
             branch = "main"
         else:
             gh("repo", "clone", full, str(work), "--", "-q")
-            branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=work).strip()
+            # In an empty repo, rev-parse fails instead of printing "HEAD"
+            branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=work,
+                         check=False).strip() or "HEAD"
             if branch == "HEAD":        # an empty repo has no branch yet
                 branch = info.get("default_branch") or "main"
                 git("checkout", "-q", "-b", branch, cwd=work)
